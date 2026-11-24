@@ -22,3 +22,6 @@ Run from developer console on lampa.stream, without credentials. Test only the p
 ```
 Report only status/type or the browser error (including CORS/CSP/network message, if present). Do not share cookies, account data, HAR, or full URLs containing authentication parameters.
 A readable result proves CORS only for that exact public endpoint. A failure is ambiguous until the console/network error is inspected; it cannot establish site-wide CORS or authenticated endpoint behavior. No real provider calls from CI or this research environment. No changes to beta.
+
+## Owner observation
+From https://lampa.stream, GET https://rezka.moi/rules/ returned HTTP 200 in DevTools but lacked Access-Control-Allow-Origin; browser blocked access with net::ERR_FAILED and TypeError Failed to fetch. Confirmed only for this public endpoint. Owner reports hdrezka.ag redirects to hdrezka-home.tv. No credentials provided or needed. Next measure anonymous public root of the final origin directly; no assumption about other endpoints or mirrors.
