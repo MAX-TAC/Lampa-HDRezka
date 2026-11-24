@@ -1,0 +1,5 @@
+# Provider decision and test checkpoint
+2026-11-25
+Provider rules published at https://rezka.moi/rules/ (section 5, revision date 2026-04-06) explicitly prohibit Lampa and its plugins even for Premium. Provider-specific integration is blocked pending explicit permission; no UA disguise, account login, stream extraction, or production mirror discovery will be added under this restriction.
+CI evidence for b32a2ad0e3b326463bb1b17d86d676dc6744185d: https://github.com/MAX-TAC/Lampa-HDRezka/actions/runs/45486934465 ; job 138774693525: 10 tests passed, 0 failed. These are unit tests, not physical-device tests.
+A diagnostic-only browser JS is supplied as diagnostics/runtime.js. It uses the documented Lampa.Select interface (https://github.com/yumata/lampa-source/blob/main/docs/en/06-ui-components.md), reads feature availability, displays the report, and does not contact HDRezka or read credentials. Install temporarily as a Lampa extension from a pinned raw URL; restart if necessary, photograph the report, then remove extension and restart. If no report is displayed, record that fact. New UI tests must pass before recommending installation. No service playback release.
