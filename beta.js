@@ -1,4 +1,4 @@
-/* Lampa client prototype 0.1.3-demo.
+/* Lampa client prototype 0.1.4-demo.
  * Independent implementation; upstream concept: gmm67 rezka.js
  * https://gist.github.com/gmm67/888fc9f66b7801c3daedac316ad38ad9
  * Demo fixtures only; no HDRezka requests, passwords, cookies or UA changes.
@@ -45,26 +45,31 @@ function createCatalogClient({origin, mediaOrigins = [], fetcher = root.fetch, t
   const base = validateOrigin(origin);
   const media = new Set([base, ...mediaOrigins.map(validateOrigin)]);
   if (typeof fetcher !== 'function' || !Number.isInteger(timeoutMs) || timeoutMs < 1 || timeoutMs > 30000) throw new TypeError('Invalid transport');
-  async function get(path, params) {
+  async function get(path, params, signal) {
+    if ((signal && signal.aborted)) throw new CatalogError('CANCELLED');
     const u = new URL('/v1/' + path, base);
     Object.entries(params || {}).forEach(([k,v]) => u.searchParams.set(k, String(v)));
     const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), timeoutMs);
+    const cancel = () => controller.abort();
+    if (signal) signal.addEventListener('abort', cancel, {once:true});
+    const timer = setTimeout(cancel, timeoutMs);
     try {
       const r = await fetcher(u.href, {
         method: 'GET', headers: {Accept:'application/json'}, credentials:'omit',
         redirect:'error', cache:'no-store', referrerPolicy:'no-referrer', signal:controller.signal
       });
+      if (controller.signal.aborted) throw new CatalogError((signal && signal.aborted) ? 'CANCELLED' : 'TIMEOUT');
       if (!r.ok) throw new CatalogError('HTTP_ERROR', r.status);
       if (r.redirected || (r.url && new URL(r.url).origin !== base)) throw new CatalogError('INVALID_ORIGIN');
       if (!/^application\/json(?:\s*;|$)/i.test(r.headers.get('content-type') || '')) throw new CatalogError('INVALID_CONTENT_TYPE');
       const raw = await r.text();
+      if (controller.signal.aborted) throw new CatalogError((signal && signal.aborted) ? 'CANCELLED' : 'TIMEOUT');
       if (raw.length > 1000000) throw new CatalogError('RESPONSE_TOO_LARGE');
       try { return JSON.parse(raw); } catch { throw new CatalogError('INVALID_JSON'); }
     } catch (e) {
       if (e instanceof CatalogError) throw e;
-      throw new CatalogError(controller.signal.aborted ? 'TIMEOUT' : 'NETWORK_ERROR');
-    } finally { clearTimeout(timer); }
+      throw new CatalogError((signal && signal.aborted) ? 'CANCELLED' : controller.signal.aborted ? 'TIMEOUT' : 'NETWORK_ERROR');
+    } finally { clearTimeout(timer); if (signal) signal.removeEventListener('abort', cancel); }
   }
   function stream(value) {
     check(value && typeof value === 'object');
@@ -75,21 +80,21 @@ function createCatalogClient({origin, mediaOrigins = [], fetcher = root.fetch, t
   }
   function id(value) { return str(value,128); }
   return Object.freeze({
-    async search(query) {
-      return list(await get('search',{q:str(query,256)}), value => {
+    async search(query, signal) {
+      return list(await get('search',{q:str(query,256)},signal), value => {
         const item = named(value);
         check(value.kind === 'movie' || value.kind === 'series');
         return {...item,kind:value.kind,year:number(value.year,1888,2100)};
       });
     },
-    async voices(movieId) { return list(await get('voices',{id:id(movieId)}), named); },
-    async seasons(movieId, voiceId) { return list(await get('seasons',{id:id(movieId),voice:id(voiceId)}), x=>number(x,0,999)); },
-    async episodes(movieId, voiceId, season) { return list(await get('episodes',{id:id(movieId),voice:id(voiceId),season:number(season,0,999)}),x=>number(x,1,9999)); },
-    async streams(movieId,voiceId,season=null,episode=null) {
+    async voices(movieId, signal) { return list(await get('voices',{id:id(movieId)},signal), named); },
+    async seasons(movieId, voiceId, signal) { return list(await get('seasons',{id:id(movieId),voice:id(voiceId)},signal), x=>number(x,0,999)); },
+    async episodes(movieId, voiceId, season, signal) { return list(await get('episodes',{id:id(movieId),voice:id(voiceId),season:number(season,0,999)},signal),x=>number(x,1,9999)); },
+    async streams(movieId,voiceId,season=null,episode=null,signal) {
       const p={id:id(movieId),voice:id(voiceId)};
       if ((season===null)!==(episode===null)) throw new CatalogError('INVALID_EPISODE');
       if (season!==null) {p.season=number(season,0,999);p.episode=number(episode,1,9999);}
-      return list(await get('streams',p),stream).sort((a,b)=>b.height-a.height);
+      return list(await get('streams',p,signal),stream).sort((a,b)=>b.height-a.height);
     }
   });
 }
@@ -121,11 +126,11 @@ function createCatalogClient({origin, mediaOrigins = [], fetcher = root.fetch, t
   function makeDemo(){
     var api=createCatalogClient({origin:'https://catalog.example',mediaOrigins:['https://developer.mozilla.org'],fetcher:fixtureFetch});
     return {
-      search:function(q){return api.search(q||'*');},
-      voices:function(m){return api.voices(m.id);},
-      seasons:function(m,v){return api.seasons(m.id,v.id);},
-      episodes:function(m,v,n){return api.episodes(m.id,v.id,n);},
-      streams:function(m,v,n,e){return api.streams(m.id,v.id,n,e);}
+      search:function(q,signal){return api.search(q||'*',signal);},
+      voices:function(m,signal){return api.voices(m.id,signal);},
+      seasons:function(m,v,signal){return api.seasons(m.id,v.id,signal);},
+      episodes:function(m,v,n,signal){return api.episodes(m.id,v.id,n,signal);},
+      streams:function(m,v,n,e,signal){return api.streams(m.id,v.id,n,e,signal);}
     };
   }
   function createClient(l,provider){
@@ -162,45 +167,49 @@ function createCatalogClient({origin, mediaOrigins = [], fetcher = root.fetch, t
     function load(work,done,back){
       if(closed)return;
       var token=++generation;
+      var request=new AbortController();
       function cancel(){
         if(closed||token!==generation)return;
-        generation++;l.Select.close();back();
+        generation++;request.abort();l.Select.close();back();
       }
       l.Select.show({title:'Загрузка (демо)',items:[{title:'Отмена'}],onSelect:cancel,onBack:cancel});
-      Promise.resolve().then(work).then(function(result){
+      Promise.resolve().then(function(){return work(request.signal);}).then(function(result){
         if(closed||token!==generation)return;
         generation++;l.Select.close();done(result);
       },function(error){
         if(closed||token!==generation)return;
         generation++;l.Select.close();
-        pick('Ошибка запроса (демо)',[{title:'Повторить',retry:true},{title:'Назад'}],function(x){
+        var retry=error && (error.code==='NETWORK_ERROR'||error.code==='TIMEOUT'||(error.code==='HTTP_ERROR'&&[502,503,504].indexOf(error.status)!==-1));
+        var reason=error&&error.code==='HTTP_ERROR'?'HTTP '+error.status:error&&error.code==='TIMEOUT'?'Тайм-аут':'Ошибка данных или сети';
+        var options=retry?[{title:'Повторить',retry:true},{title:'Назад'}]:[{title:'Назад'}];
+        pick('Ошибка запроса (демо): '+reason,options,function(x){
           if(x.retry)load(work,done,back);else back();
         },back);
       });
     }
     function quality(movie,voice,season,episode,back){
-      load(function(){return provider.streams(movie,voice,season,episode);},function(variants){
+      load(function(signal){return provider.streams(movie,voice,season,episode,signal);},function(variants){
         if(!variants.length){notify('Нет доступных форматов');back();return;}
         pick('Формат видео (демо)',variants,function(v){play(movie.title,episode,v,back);},back);
       },back);
     }
     function episodes(movie,voice,season,back){
       function again(){episodes(movie,voice,season,back);}
-      load(function(){return provider.episodes(movie,voice,season);},function(numbers){
+      load(function(signal){return provider.episodes(movie,voice,season,signal);},function(numbers){
         if(!numbers.length){notify('Нет серий');back();return;}
         pick('Сезон '+season,numbers.map(function(n){return {title:'Серия '+n,n:n};}),function(x){quality(movie,voice,season,x.n,again);},back);
       },back);
     }
     function seasons(movie,voice,back){
       function again(){seasons(movie,voice,back);}
-      load(function(){return provider.seasons(movie,voice);},function(numbers){
+      load(function(signal){return provider.seasons(movie,voice,signal);},function(numbers){
         if(!numbers.length){notify('Нет сезонов');back();return;}
         pick('Выберите сезон',numbers.map(function(n){return {title:'Сезон '+n,n:n};}),function(x){episodes(movie,voice,x.n,again);},back);
       },back);
     }
     function voices(movie,back){
       function again(){voices(movie,back);}
-      load(function(){return provider.voices(movie);},function(list){
+      load(function(signal){return provider.voices(movie,signal);},function(list){
         if(!list.length){notify('Нет озвучек');back();return;}
         pick('Выберите озвучку (демо)',list,function(v){
           if(movie.kind==='series')seasons(movie,v,again);
@@ -210,7 +219,7 @@ function createCatalogClient({origin, mediaOrigins = [], fetcher = root.fetch, t
     }
     function results(query){
       function again(){results(query);}
-      load(function(){return provider.search(query);},function(found){
+      load(function(signal){return provider.search(query,signal);},function(found){
         if(!found.length){notify('Ничего не найдено');home();return;}
         pick('Результаты поиска (демо)',found,function(x){voices(x,again);},home);
       },home);
@@ -224,7 +233,7 @@ function createCatalogClient({origin, mediaOrigins = [], fetcher = root.fetch, t
       });
     }
     function home(){
-      pick('Lampa HDRezka — ДЕМО 0.1.3',[
+      pick('Lampa HDRezka — ДЕМО 0.1.4',[
         {title:'Тестовый каталог',action:'catalog'},
         {title:'Поиск',action:'search'},
         {title:'Тестовая сессия: '+(simulatedLogin?'активна':'нет'),action:'session'},
@@ -246,7 +255,7 @@ function createCatalogClient({origin, mediaOrigins = [], fetcher = root.fetch, t
       var c=l.Controller && typeof l.Controller.enabled==='function' && l.Controller.enabled();
       previous=c && typeof c.name==='string'?c.name:'content';
       if(cardKind==='movie'||cardKind==='series'){
-        load(function(){return provider.search('');},function(found){
+        load(function(signal){return provider.search('',signal);},function(found){
           var entry=found.filter(function(x){return x.kind===cardKind;})[0];
           if(entry)voices(entry,home);else home();
         },home);return;
@@ -255,7 +264,7 @@ function createCatalogClient({origin, mediaOrigins = [], fetcher = root.fetch, t
     }};
   }
   if(typeof module==='object' && module.exports){module.exports={createClient:createClient,makeDemo:makeDemo};return;}
-  var l=root.Lampa, key='__max_tac_hdrezka_demo_013';
+  var l=root.Lampa, key='__max_tac_hdrezka_demo_014';
   if(!l||root[key])return;
   var started=false;
   function init(){
@@ -263,7 +272,7 @@ function createCatalogClient({origin, mediaOrigins = [], fetcher = root.fetch, t
     if(!l.Select||typeof l.Select.show!=='function'||typeof l.Select.close!=='function'||
        !l.Player||typeof l.Player.play!=='function'||!l.SettingsApi||
        typeof l.SettingsApi.addComponent!=='function'||typeof l.SettingsApi.addParam!=='function'){
-      if(root.console && typeof root.console.warn==='function')root.console.warn('[HDRezka demo 0.1.3] Required API unavailable');
+      if(root.console && typeof root.console.warn==='function')root.console.warn('[HDRezka demo 0.1.4] Required API unavailable');
       return;
     }
     if(typeof root.AbortController!=='function'||typeof root.URL!=='function'){if(root.console)root.console.warn('[HDRezka demo] Missing browser APIs');return;}
@@ -277,7 +286,7 @@ function createCatalogClient({origin, mediaOrigins = [], fetcher = root.fetch, t
     root.Lampa.SettingsApi.addParam({
       component:component,
       param:{name:'max_tac_hdrezka_demo_open',type:'button'},
-      field:{name:'Открыть тестовый каталог',description:'Демонстрация интерфейса 0.1.3. Без подключения к HDRezka.'},
+      field:{name:'Открыть тестовый каталог',description:'Демонстрация интерфейса 0.1.4. Без подключения к HDRezka.'},
       onChange:function(){client.open();}
     });
     if(l.Listener&&typeof l.Listener.follow==='function'&&typeof root.$==='function'){
@@ -297,7 +306,7 @@ function createCatalogClient({origin, mediaOrigins = [], fetcher = root.fetch, t
       });
     }
     started=true;
-    if(root.console && typeof root.console.info==='function')root.console.info('[HDRezka demo 0.1.3] Settings registered');
+    if(root.console && typeof root.console.info==='function')root.console.info('[HDRezka demo 0.1.4] Settings registered');
   }
   root[key]=true;
   if(root.appready)init();
