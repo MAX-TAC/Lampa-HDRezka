@@ -25,3 +25,6 @@ CI run https://github.com/MAX-TAC/Lampa-HDRezka/actions/runs/45493600167 verifie
 
 ## Owner acceptance — 0.1.2 demo movie card
 Owner reports opening a movie card, finding HDRezka under Watch, selecting the source, seeing voice and format selectors, and successfully playing the sample video. Movie card flow accepted on the user-tested environment (device not explicitly named in this report; earlier testing was on PC). Series card flow, actual remote navigation on Android TV and LG webOS/MSX, and real provider integration remain unverified. No code or beta changes in this checkpoint.
+
+## Generic asynchronous catalog adapter
+Added src/catalog-client.mjs, tests/catalog-client.test.mjs (7 additional cases), docs/CATALOG_CONTRACT.md. Proposed JSON contract only; not HDRezka endpoints. No credentials, no live provider calls, no integration with the beta bundle. Official supported HDRezka API not identified; current rules https://rezka.fi/rules/ explicitly prohibit Lampa. Baseline 30/30 passed; new test commit f24a6b1d0b37354a2438a365a16a2b3f645d8007 has no reported PR CI run at time of checkpoint. beta remains owner-tested 0.1.2-demo. Actual integration requires supported provider contract; do not present generic client as completed plugin.
