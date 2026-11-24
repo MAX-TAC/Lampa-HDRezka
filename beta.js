@@ -1,4 +1,4 @@
-/* Lampa client prototype 0.1.1-demo.
+/* Lampa client prototype 0.1.2-demo.
  * Independent implementation; upstream concept: gmm67 rezka.js
  * https://gist.github.com/gmm67/888fc9f66b7801c3daedac316ad38ad9
  * Demo fixtures only; no HDRezka requests, passwords, cookies or UA changes.
@@ -89,7 +89,7 @@
       });
     }
     function home(){
-      pick('Lampa HDRezka — ДЕМО 0.1.1',[
+      pick('Lampa HDRezka — ДЕМО 0.1.2',[
         {title:'Тестовый каталог',action:'catalog'},
         {title:'Поиск',action:'search'},
         {title:'Тестовая сессия: '+(simulatedLogin?'активна':'нет'),action:'session'},
@@ -103,16 +103,20 @@
         else exit();
       },exit);
     }
-    return {open:function(){
+    return {open:function(cardKind){
       if(!closed && generation)return;
       closed=false;
       var c=l.Controller && typeof l.Controller.enabled==='function' && l.Controller.enabled();
       previous=c && typeof c.name==='string'?c.name:'content';
+      if(cardKind==='movie'||cardKind==='series'){
+        var entry=provider.search('').filter(function(x){return x.kind===cardKind;})[0];
+        if(entry){voices(entry,home);return;}
+      }
       home();
     }};
   }
   if(typeof module==='object' && module.exports){module.exports={createClient:createClient,demo:demo};return;}
-  var l=root.Lampa, key='__max_tac_hdrezka_demo_011';
+  var l=root.Lampa, key='__max_tac_hdrezka_demo_012';
   if(!l||root[key])return;
   var started=false;
   function init(){
@@ -120,7 +124,7 @@
     if(!l.Select||typeof l.Select.show!=='function'||typeof l.Select.close!=='function'||
        !l.Player||typeof l.Player.play!=='function'||!l.SettingsApi||
        typeof l.SettingsApi.addComponent!=='function'||typeof l.SettingsApi.addParam!=='function'){
-      if(root.console && typeof root.console.warn==='function')root.console.warn('[HDRezka demo 0.1.1] Required API unavailable');
+      if(root.console && typeof root.console.warn==='function')root.console.warn('[HDRezka demo 0.1.2] Required API unavailable');
       return;
     }
     var client=createClient(l,demo);
@@ -133,11 +137,27 @@
     root.Lampa.SettingsApi.addParam({
       component:component,
       param:{name:'max_tac_hdrezka_demo_open',type:'button'},
-      field:{name:'Открыть тестовый каталог',description:'Демонстрация интерфейса 0.1.1. Без подключения к HDRezka.'},
+      field:{name:'Открыть тестовый каталог',description:'Демонстрация интерфейса 0.1.2. Без подключения к HDRezka.'},
       onChange:function(){client.open();}
     });
+    if(l.Listener&&typeof l.Listener.follow==='function'&&typeof root.$==='function'){
+      l.Listener.follow('full',function(event){
+        if(!event||event.type!=='complite'||!event.body||typeof event.body.find!=='function')return;
+        if(root.lampa_settings&&root.lampa_settings.read_only)return;
+        var movie=event.data&&event.data.movie;
+        if(!movie||movie.blocked||movie.adult)return;
+        if(event.body.find('.max-tac-rezka-demo-source').length)return;
+        var target=event.body.find('.buttons--container').first();
+        if(!target.length)target=event.body.find('.full-start-new__buttons').first();
+        if(!target.length)return;
+        var kind=movie.media_type==='tv'||movie.media_type==='series'||movie.number_of_seasons>0||(!movie.title&&movie.name)?'series':'movie';
+        var button=root.$('<div class="full-start__button selector max-tac-rezka-demo-source"><span>HDRezka — ДЕМО</span></div>');
+        button.on('hover:enter',function(){client.open(kind);});
+        target.append(button);
+      });
+    }
     started=true;
-    if(root.console && typeof root.console.info==='function')root.console.info('[HDRezka demo 0.1.1] Settings registered');
+    if(root.console && typeof root.console.info==='function')root.console.info('[HDRezka demo 0.1.2] Settings registered');
   }
   root[key]=true;
   if(root.appready)init();
