@@ -28,26 +28,31 @@ export function createCatalogClient({origin, mediaOrigins = [], fetcher = global
   const base = validateOrigin(origin);
   const media = new Set([base, ...mediaOrigins.map(validateOrigin)]);
   if (typeof fetcher !== 'function' || !Number.isInteger(timeoutMs) || timeoutMs < 1 || timeoutMs > 30000) throw new TypeError('Invalid transport');
-  async function get(path, params) {
+  async function get(path, params, signal) {
+    if ((signal && signal.aborted)) throw new CatalogError('CANCELLED');
     const u = new URL('/v1/' + path, base);
     Object.entries(params || {}).forEach(([k,v]) => u.searchParams.set(k, String(v)));
     const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), timeoutMs);
+    const cancel = () => controller.abort();
+    if (signal) signal.addEventListener('abort', cancel, {once:true});
+    const timer = setTimeout(cancel, timeoutMs);
     try {
       const r = await fetcher(u.href, {
         method: 'GET', headers: {Accept:'application/json'}, credentials:'omit',
         redirect:'error', cache:'no-store', referrerPolicy:'no-referrer', signal:controller.signal
       });
+      if (controller.signal.aborted) throw new CatalogError((signal && signal.aborted) ? 'CANCELLED' : 'TIMEOUT');
       if (!r.ok) throw new CatalogError('HTTP_ERROR', r.status);
       if (r.redirected || (r.url && new URL(r.url).origin !== base)) throw new CatalogError('INVALID_ORIGIN');
       if (!/^application\/json(?:\s*;|$)/i.test(r.headers.get('content-type') || '')) throw new CatalogError('INVALID_CONTENT_TYPE');
       const raw = await r.text();
+      if (controller.signal.aborted) throw new CatalogError((signal && signal.aborted) ? 'CANCELLED' : 'TIMEOUT');
       if (raw.length > 1000000) throw new CatalogError('RESPONSE_TOO_LARGE');
       try { return JSON.parse(raw); } catch { throw new CatalogError('INVALID_JSON'); }
     } catch (e) {
       if (e instanceof CatalogError) throw e;
-      throw new CatalogError(controller.signal.aborted ? 'TIMEOUT' : 'NETWORK_ERROR');
-    } finally { clearTimeout(timer); }
+      throw new CatalogError((signal && signal.aborted) ? 'CANCELLED' : controller.signal.aborted ? 'TIMEOUT' : 'NETWORK_ERROR');
+    } finally { clearTimeout(timer); if (signal) signal.removeEventListener('abort', cancel); }
   }
   function stream(value) {
     check(value && typeof value === 'object');
@@ -58,21 +63,21 @@ export function createCatalogClient({origin, mediaOrigins = [], fetcher = global
   }
   function id(value) { return str(value,128); }
   return Object.freeze({
-    async search(query) {
-      return list(await get('search',{q:str(query,256)}), value => {
+    async search(query, signal) {
+      return list(await get('search',{q:str(query,256)},signal), value => {
         const item = named(value);
         check(value.kind === 'movie' || value.kind === 'series');
         return {...item,kind:value.kind,year:number(value.year,1888,2100)};
       });
     },
-    async voices(movieId) { return list(await get('voices',{id:id(movieId)}), named); },
-    async seasons(movieId, voiceId) { return list(await get('seasons',{id:id(movieId),voice:id(voiceId)}), x=>number(x,0,999)); },
-    async episodes(movieId, voiceId, season) { return list(await get('episodes',{id:id(movieId),voice:id(voiceId),season:number(season,0,999)}),x=>number(x,1,9999)); },
-    async streams(movieId,voiceId,season=null,episode=null) {
+    async voices(movieId, signal) { return list(await get('voices',{id:id(movieId)},signal), named); },
+    async seasons(movieId, voiceId, signal) { return list(await get('seasons',{id:id(movieId),voice:id(voiceId)},signal), x=>number(x,0,999)); },
+    async episodes(movieId, voiceId, season, signal) { return list(await get('episodes',{id:id(movieId),voice:id(voiceId),season:number(season,0,999)},signal),x=>number(x,1,9999)); },
+    async streams(movieId,voiceId,season=null,episode=null,signal) {
       const p={id:id(movieId),voice:id(voiceId)};
       if ((season===null)!==(episode===null)) throw new CatalogError('INVALID_EPISODE');
       if (season!==null) {p.season=number(season,0,999);p.episode=number(episode,1,9999);}
-      return list(await get('streams',p),stream).sort((a,b)=>b.height-a.height);
+      return list(await get('streams',p,signal),stream).sort((a,b)=>b.height-a.height);
     }
   });
 }
