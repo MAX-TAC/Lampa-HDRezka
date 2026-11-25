@@ -1,0 +1,2 @@
+# Development rules
+Keep changes in review branches; preserve upstream attribution. Record actions, decisions and test evidence in docs/HANDOFF.md or logs/. Never claim tests ran without output. Do not commit secrets. Use normal client identification; never transfer sessions between origins. Stop on access denials and rate limits. Use mock fixtures until supported integration is verified. No release until Android TV runtime tests pass.
